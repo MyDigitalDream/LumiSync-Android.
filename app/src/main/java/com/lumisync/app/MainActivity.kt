@@ -87,7 +87,7 @@ class MainActivity : Activity() {
  private fun locationEnabled():Boolean = if(Build.VERSION.SDK_INT>=28) (getSystemService(LOCATION_SERVICE) as android.location.LocationManager).isLocationEnabled else Settings.Secure.getInt(contentResolver,Settings.Secure.LOCATION_MODE,0)!=0
  private fun requestScan() {
   if(adapter==null) { status.text="This phone has no Bluetooth radio. You can still use GE Cync."; return }
-  if(!permitted()) { requestPermissions(if(Build.VERSION.SDK_INT>=31) arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT) else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),7); return }
+  if(!permitted()) { requestPermissions(if(Build.VERSION.SDK_INT>=31) arrayOf(Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT) else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),7); return }
   try {
    if(adapter?.isEnabled!=true) { startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),8); return }
    if(Build.VERSION.SDK_INT<=30 && !locationEnabled()) {

@@ -35,7 +35,7 @@ internal class LumiUi(val activity:Activity) {
   parent.addView(this,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(16) })
  }
  fun button(value:String,primary:Boolean=false,action:()->Unit):Button=Button(activity).apply {
-  text=value; isAllCaps=false; textSize=15f; typeface=Typeface.create("sans-serif-medium",0)
+  text=value; isAllCaps=false; textSize=15f; typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
   setTextColor(if(primary) Palette.bg else Palette.text)
   background=RippleDrawable(ColorStateList.valueOf(0x30FFFFFF),shape(if(primary) Palette.accent else Palette.raised,14),null)
   minHeight=dp(52); minimumHeight=dp(52); setPadding(dp(14),dp(10),dp(14),dp(10))

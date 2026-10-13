@@ -1,4 +1,4 @@
-# LumiSync 0.2
+# LumiSync 0.3
 
 Android app with experimental Bluetooth LED control and GE Cync control through a Home Assistant server. Direct phone-to-Cync authentication is not implemented. Bluetooth protocols differ between controllers; the provisional Lotus Lantern-style commands are not confirmed for your hardware.
 
@@ -21,10 +21,16 @@ Enable Bluetooth, grant Nearby Devices permission (location on Android 11 and ea
 5. In LumiSync, open Cync controls, enter the HTTPS server URL and token, then connect. Select the Cync light by entity ID; the list includes all Home Assistant light entities.
 6. Use On/Off, brightness and RGB where the light supports them. Refresh to read the state.
 
-The Home Assistant token remains in memory for the screen session and is not saved to disk or Android view state. App backups are disabled; redirects are refused. Never enter your GE password into LumiSync. Home Assistant's Cync integration handles GE authentication. Revoking a Home Assistant token ends its access. No music sync, strip segments or dynamic Cync effects in this build.
+The Home Assistant token remains in memory for the app process session (including navigation between Bluetooth and Cync) and is not saved to disk or Android view state. App backups are disabled; redirects are refused. Never enter your GE password into LumiSync. Home Assistant's Cync integration handles GE authentication. Revoking a Home Assistant token ends its access. No music sync, strip segments or dynamic Cync effects in this build.
 
 References: https://www.home-assistant.io/integrations/cync/ and https://developers.home-assistant.io/docs/api/rest/
 
 ## Validation
 
-No Android SDK or Gradle is installed in the editing environment. GitHub Actions is the compilation check. No physical Bluetooth or Cync light testing has been performed.
+GitHub Actions compiles the APK, runs Android lint, and launches it in an Android 15 emulator for navigation, disconnected controls, color selection and setup validation checks. UI screenshots are retained as a workflow artifact. No physical Bluetooth or Cync light testing has been performed.
+
+## Interface in 0.3
+
+Dark dashboard with separate Bluetooth and GE Cync tabs; a nearby-device picker; explicit connection states; large power buttons; a full HSV color wheel and six named presets; color intensity; and contextual connection help. Cync setup collapses after connection, with capability-aware light controls, state refresh, and a disconnect action that clears the in-memory session. Bluetooth writes are guarded while one request is pending.
+
+The first 0.3 install may require uninstalling 0.2 because the earlier CI build used a different debug signing key. Future debug builds reuse the cached key while it remains available; this is a test build, not a production release signing setup.

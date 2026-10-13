@@ -1,7 +1,7 @@
 name: Build LumiSync APK
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, lumisync/cync-bluetooth-detection]
   workflow_dispatch:
 permissions:
   contents: read

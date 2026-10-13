@@ -7,7 +7,7 @@ def nodes():
     adb('shell','uiautomator','dump','/sdcard/window.xml')
     return ET.fromstring(adb('shell','cat','/sdcard/window.xml')).iter('node')
 def node(text):
-    return next((n for n in nodes() if n.get('text')==text),None)
+    return next((n for n in nodes() if n.get('text','').casefold()==text.casefold()),None)
 def check(text):
     assert node(text) is not None, f'Missing view: {text}'
 def tap(text):

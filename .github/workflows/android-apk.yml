@@ -27,7 +27,7 @@ jobs:
           path: ~/.android/debug.keystore
           key: lumisync-debug-signing-v1
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug :app:lintDebug
+        run: gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
       - name: Print lint diagnostics
         if: failure()
         run: cat app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt

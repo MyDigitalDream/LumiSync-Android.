@@ -12,6 +12,10 @@ def check(text):
     assert node(text) is not None, f'Missing view: {text}'
 def tap(text):
     n=node(text)
+    for _ in range(4):
+        if n is not None: break
+        adb('shell','input','swipe','500','1550','500','900','350'); time.sleep(.3)
+        n=node(text)
     assert n is not None, f'Missing button: {text}'
     assert n.get('enabled')=='true', f'Disabled button: {text}'
     x1,y1,x2,y2=map(int,re.findall(r'\d+',n.get('bounds')))
@@ -24,7 +28,7 @@ adb('shell','am','start','-W','-n','com.lumisync.app/.MainActivity'); time.sleep
 check('Add your first light')
 assert node('Turn on').get('enabled')=='false', 'Power must be disabled without a device'
 shot('01-bluetooth-home')
-tap('GE Cync'); check('Bring your Cync lights in'); shot('02-cync-setup')
+tap('GE Cync'); check('Bring your Cync lights in'); check('Find Cync nearby'); shot('02-cync-setup')
 tap('How to set up Home Assistant'); check('Set up Cync once'); shot('03-setup-help'); tap('Got it')
 tap('Bluetooth'); check('Add your first light')
 # Scroll the actual page to inspect the picker and use a named color.

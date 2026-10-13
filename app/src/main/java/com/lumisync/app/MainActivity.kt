@@ -39,21 +39,37 @@ class MainActivity : Activity() {
  private var picker:AlertDialog?=null
  private var pickerList:LinearLayout?=null
  private var pickerStatus:TextView?=null
- private val seen=mutableSetOf<String>()
- private val known=setOf("0000ffe1-0000-1000-8000-00805f9b34fb","0000ffe9-0000-1000-8000-00805f9b34fb","0000fff3-0000-1000-8000-00805f9b34fb","0000ff01-0000-1000-8000-00805f9b34fb","6e400002-b5a3-f393-e0a9-e50e24dcca9e")
- private val scanTimeout=Runnable { stopScan(); pickerStatus?.text=if(seen.isEmpty()) "No devices found. Move closer, power on your light, then scan again." else "${seen.size} nearby devices. Choose your LED controller." }
+ private data class Found(val device:BluetoothDevice,val evidence:BleDetection.Evidence,val rssi:Int) {
+  val match get()=BleDetection.advertised(evidence)
+ }
+ private val found=linkedMapOf<String,Found>()
+ private var showOther=false
+ private var currentEvidence=BleDetection.Evidence()
+ private var currentMatch=BleDetection.advertised(currentEvidence)
+ private var currentAddress=""
+ private var discoveredServices=setOf<String>()
+ private var discoveredCharacteristics=setOf<String>()
+ private lateinit var cyncCard:LinearLayout
+ private lateinit var cyncHint:TextView
+ private var renderPending=false
+ private val renderResults=Runnable { renderPending=false; renderPicker() }
+ private val scanTimeout=Runnable { stopScan(); renderPicker() }
  private val writeTimeout=Runnable { busy=false; status.text="The light did not confirm the request. Try again." }
  private val scannerCallback=object:ScanCallback() {
   override fun onScanResult(callbackType:Int,result:ScanResult) { runOnUiThread {
    if(!scanning || isDestroyed) return@runOnUiThread
    val device=result.device
    try {
-    if(!seen.add(device.address)) return@runOnUiThread
-    val name=result.scanRecord?.deviceName ?: device.name ?: "Unnamed device"
-    pickerStatus?.text="${seen.size} nearby devices · scanning…"
-    val signal=if(result.rssi> -65) "Strong signal" else if(result.rssi> -85) "Nearby" else "Weak signal · move closer"
-    val b=ui.button("$name\n$signal") { picker?.dismiss(); connect(device,name) }
-    pickerList?.addView(b,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=ui.dp(10) })
+    val record=result.scanRecord
+    val companies=record?.manufacturerSpecificData
+    val companyIds=if(companies==null) emptySet() else (0 until companies.size()).map { companies.keyAt(it) }.toSet()
+    val next=BleDetection.Evidence(record?.deviceName ?: device.name ?: "",record?.serviceUuids?.map { it.uuid.toString() }?.toSet() ?: emptySet(),companyIds)
+    val previous=found[device.address]
+    val evidence=previous?.evidence?.merge(next) ?: next
+    found[device.address]=Found(device,evidence,result.rssi)
+    if(previous==null || previous.evidence!=evidence || signal(previous.rssi)!=signal(result.rssi)) {
+     if(!renderPending) { renderPending=true; handler.postDelayed(renderResults,250) }
+    }
    } catch(_:SecurityException) { stopScan(); status.text="Bluetooth access was removed. Tap Find a light to grant access." }
   } }
   override fun onScanFailed(errorCode:Int) { runOnUiThread { stopScan(); pickerStatus?.text="Scan could not start ($errorCode). Wait a moment, then try again." } }
@@ -66,12 +82,21 @@ class MainActivity : Activity() {
   val device=ui.card(root)
   device.addView(ui.text("BLUETOOTH LIGHT",12f,Palette.accent,true)); ui.space(device,10)
   title=ui.text("Add your first light",23f,bold=true); device.addView(title)
-  detail=ui.text("Connect a nearby LED controller to get started.",15f,Palette.muted); ui.space(device,6); device.addView(detail)
+  detail=ui.text("Find nearby LED controllers and Cync Bluetooth devices.",15f,Palette.muted); ui.space(device,6); device.addView(detail)
   ui.space(device,18)
   select=ui.button("＋  Find a light",true) { requestScan() }; ui.full(device,select)
   ui.space(device,10)
   disconnect=ui.button("Disconnect") { closeConnection(); updateDisconnected("Disconnected. Your light is ready to reconnect.") }
   ui.full(device,disconnect); disconnect.visibility=android.view.View.GONE
+  cyncCard=ui.card(root)
+  cyncCard.addView(ui.text("YOUR CONNECTION OPTIONS",12f,Palette.accent,true)); ui.space(cyncCard,10)
+  cyncHint=ui.text("",15f,Palette.muted); cyncCard.addView(cyncHint); ui.space(cyncCard,14)
+  ui.full(cyncCard,ui.button("Open Cync app",true) { openCyncApp() }); ui.space(cyncCard,10)
+  ui.full(cyncCard,ui.button("Link to Home Assistant") {
+   startActivity(Intent(this,CyncActivity::class.java).putExtra("ble_address",currentAddress).putExtra("ble_name",connectedName))
+  }); ui.space(cyncCard,10)
+  ui.full(cyncCard,ui.button("Copy device details") { copyDeviceDetails() })
+  cyncCard.visibility=android.view.View.GONE
   status=ui.text("Choose your light above. You can explore colors below.",14f,Palette.muted)
   root.addView(status,LinearLayout.LayoutParams(-1,-2).apply { leftMargin=ui.dp(4); rightMargin=ui.dp(4); bottomMargin=ui.dp(18) })
   controls=LightControls(ui,root,{ on -> send(byteArrayOf(0x7E,0x04,0x04,if(on) 0x01 else 0x00,0x00,0x01,0xFF.toByte(),0x00,0xEF.toByte())) },{ color,intensity ->
@@ -82,7 +107,61 @@ class MainActivity : Activity() {
   footer.addView(ui.text("A little help",16f,bold=true)); ui.space(footer,6)
   footer.addView(ui.text("Keep your light powered on and close by. Bluetooth controls depend on your LED controller model.",14f,Palette.muted))
   ui.space(footer,12); ui.full(footer,ui.button("Connection help") { showHelp() })
+  if(intent.getBooleanExtra("scan_lights",false)) { intent.removeExtra("scan_lights"); handler.post { requestScan() } }
  }
+ private fun signal(rssi:Int)=if(rssi> -65) "Strong signal" else if(rssi> -85) "Nearby" else "Weak signal · move closer"
+ private fun renderPicker() {
+  val list=pickerList ?: return
+  list.removeAllViews()
+  val likely=found.values.count { it.match.likelyLight }
+  pickerStatus?.text=if(found.isEmpty()) {
+   if(scanning) "Searching for lights…" else "No devices found. Power on your light, move closer and scan again."
+  } else "$likely likely lights · ${found.size-likely} other devices"+(if(scanning) " · scanning…" else "")
+  val items=found.values.filter { showOther || it.match.likelyLight }.sortedWith(compareBy<Found> { it.match.kind.rank }.thenBy { it.evidence.name.lowercase() })
+  if(items.isEmpty() && found.isNotEmpty()) list.addView(ui.text("No known lighting signals yet. Enable ‘Show other Bluetooth devices’ to inspect unnamed or unrecognized lights.",14f,Palette.muted))
+  items.forEach { item ->
+   val name=item.evidence.name.ifBlank { "Unnamed device" }
+   val b=ui.button("$name\n${item.match.label} · ${signal(item.rssi)}") { picker?.dismiss(); connect(item.device,name,item.evidence) }
+   list.addView(b,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=ui.dp(10) })
+  }
+ }
+ private fun connectionFailure(message:String) {
+  if(currentMatch.needsMeshRoute) showMeshOptions() else updateDisconnected(message)
+ }
+ private fun showMeshOptions() {
+  closeConnection() // release BLE so the Cync app can connect; never send generic LED bytes here
+  controls.setReady(false); controls.powerCard.visibility=android.view.View.GONE; controls.colorCard.visibility=android.view.View.GONE
+  cyncCard.visibility=android.view.View.VISIBLE; disconnect.visibility=android.view.View.GONE
+  title.text=connectedName; detail.text=currentMatch.label; select.text="Find another light"
+  cyncHint.text=when(currentMatch.kind) {
+   BleDetection.Kind.CYNC_NAME -> "This device advertises a Cync name. Open Cync for Bluetooth control, or link it to a Home Assistant light to control it here."
+   BleDetection.Kind.TELINK_MESH -> "This uses a mesh signal found on Cync and other brands. If it is your Cync light, open Cync or link its Home Assistant light below."
+   else -> "This is a Bluetooth mesh device. Confirm its brand before choosing an app or linking it to a Home Assistant light."
+  }
+  status.text="Found nearby. Direct Cync Bluetooth control is not implemented yet; it requires mesh authentication."
+ }
+ private fun openCyncApp() {
+  closeConnection()
+  try {
+   val launch=packageManager.getLaunchIntentForPackage("com.ge.cbyge")
+   if(launch!=null) startActivity(launch) else startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.ge.cbyge")))
+  } catch(_:Exception) { status.text="Open the Cync app from your phone's app list." }
+ }
+ private fun copyDeviceDetails() {
+  val report="""LumiSync 0.4 Bluetooth check
+Device name: $connectedName
+Detection: ${currentMatch.label}
+Evidence: ${currentMatch.reason}
+Manufacturer IDs: ${currentEvidence.companies.joinToString { "0x%04X".format(it) }.ifBlank { "Not advertised" }}
+Advertised services: ${currentEvidence.services.joinToString().ifBlank { "None" }}
+Discovered services: ${discoveredServices.joinToString().ifBlank { "Unavailable" }}
+Characteristics: ${discoveredCharacteristics.joinToString().ifBlank { "Unavailable" }}
+Direct Cync Bluetooth control: not implemented
+"""
+  (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("LumiSync device details",report))
+  Toast.makeText(this,"Device details copied",Toast.LENGTH_SHORT).show()
+ }
+ override fun onNewIntent(next:Intent) { super.onNewIntent(next); setIntent(next); if(next.getBooleanExtra("scan_lights",false)) { next.removeExtra("scan_lights"); requestScan() } }
  private fun permitted():Boolean=if(Build.VERSION.SDK_INT>=31) checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED else checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
  private fun locationEnabled():Boolean = if(Build.VERSION.SDK_INT>=28) (getSystemService(LOCATION_SERVICE) as android.location.LocationManager).isLocationEnabled else Settings.Secure.getInt(contentResolver,Settings.Secure.LOCATION_MODE,0)!=0
  private fun requestScan() {
@@ -100,12 +179,17 @@ class MainActivity : Activity() {
   picker?.dismiss()
   val content=ui.column().apply { setPadding(ui.dp(22),ui.dp(22),ui.dp(22),ui.dp(12)); setBackgroundColor(Palette.card) }
   content.addView(ui.text("Nearby lights",23f,bold=true)); ui.space(content,6)
-  content.addView(ui.text("Choose your LED controller. Other Bluetooth devices may appear here too.",14f,Palette.muted)); ui.space(content,12)
+  content.addView(ui.text("Cync and likely lights appear first. Tap a device to check its connection options.",14f,Palette.muted)); ui.space(content,12)
   pickerStatus=ui.text("Searching…",14f,Palette.accent).also { content.addView(it) }; ui.space(content,12)
   pickerList=ui.column()
   val scroll=ScrollView(this).apply { addView(pickerList) }
   content.addView(scroll,LinearLayout.LayoutParams(-1,ui.dp(260)))
   ui.space(content,12)
+  val others=Switch(this).apply {
+   text="Show other Bluetooth devices"; setTextColor(Palette.text); isChecked=showOther; minHeight=ui.dp(48)
+   setOnCheckedChangeListener { _,checked -> showOther=checked; renderPicker() }
+  }
+  content.addView(others)
   ui.full(content,ui.button("Scan again") { startScan() })
   picker=AlertDialog.Builder(this).setView(content).setNegativeButton("Close",null).create().also {
    it.setOnDismissListener { stopScan(); pickerList=null; pickerStatus=null }
@@ -114,13 +198,13 @@ class MainActivity : Activity() {
   startScan()
  }
  private fun startScan() {
-  stopScan(); seen.clear(); pickerList?.removeAllViews()
+  stopScan(); found.clear(); pickerList?.removeAllViews()
   try {
    val scanner=adapter?.bluetoothLeScanner ?: throw IllegalStateException()
    scanning=true; pickerStatus?.text="Searching for 10 seconds…"; scanner.startScan(scannerCallback); handler.postDelayed(scanTimeout,10000)
   } catch(_:Exception) { scanning=false; pickerStatus?.text="Could not scan. Check Bluetooth and Nearby Devices permission." }
  }
- private fun stopScan() { handler.removeCallbacks(scanTimeout); if(scanning) { scanning=false; try { adapter?.bluetoothLeScanner?.stopScan(scannerCallback) } catch(_:Exception) {} } }
+ private fun stopScan() { handler.removeCallbacks(scanTimeout); handler.removeCallbacks(renderResults); renderPending=false; if(scanning) { scanning=false; try { adapter?.bluetoothLeScanner?.stopScan(scannerCallback) } catch(_:Exception) {} } }
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) {
   super.onRequestPermissionsResult(requestCode,permissions,grantResults)
   if(requestCode==7) { if(permitted()) requestScan() else { status.text="Nearby Devices permission is needed. Enable it in Android app settings, then try again."; showHelp() } }
@@ -131,11 +215,15 @@ class MainActivity : Activity() {
   val old=gatt; gatt=null; try { old?.disconnect(); old?.close() } catch(_:Exception) {}
  }
  private fun updateDisconnected(message:String) {
+  cyncCard.visibility=android.view.View.GONE; controls.powerCard.visibility=android.view.View.VISIBLE
   controls.setReady(false); title.text=if(connectedName.isBlank()) "Add your first light" else connectedName
   detail.text="Not connected"; status.text=message; select.text="＋  Find a light"; disconnect.visibility=android.view.View.GONE
  }
- private fun connect(device:BluetoothDevice,name:String) {
+ private fun connect(device:BluetoothDevice,name:String,evidence:BleDetection.Evidence) {
   stopScan(); closeConnection(); val session=generation
+  currentEvidence=evidence; currentMatch=BleDetection.advertised(evidence); currentAddress=device.address
+  discoveredServices=emptySet(); discoveredCharacteristics=emptySet()
+  cyncCard.visibility=android.view.View.GONE; controls.powerCard.visibility=android.view.View.VISIBLE
   connectedName=name; controls.setReady(false); title.text=name; detail.text="Connecting…"; status.text="Stay close to your light. This may take a few seconds."; select.text="Choose another light"
   disconnect.visibility=android.view.View.VISIBLE
   try {
@@ -144,13 +232,17 @@ class MainActivity : Activity() {
      if(session!=generation) { g.close(); return@runOnUiThread }
      if(code==BluetoothGatt.GATT_SUCCESS && state==BluetoothProfile.STATE_CONNECTED) {
       detail.text="Finding controls…"
-      try { if(!g.discoverServices()) { closeConnection(); updateDisconnected("Could not find controls. Try reconnecting.") } } catch(_:Exception) { closeConnection(); updateDisconnected("Bluetooth permission changed. Connect again.") }
-     } else { closeConnection(); updateDisconnected("Connection ended ($code). Keep the light nearby and reconnect.") }
+      try { if(!g.discoverServices()) { closeConnection(); connectionFailure("Could not find controls. Try reconnecting.") } } catch(_:Exception) { closeConnection(); connectionFailure("Bluetooth permission changed. Connect again.") }
+     } else { closeConnection(); connectionFailure("Connection ended ($code). Keep the light nearby and reconnect.") }
     } }
     override fun onServicesDiscovered(g:BluetoothGatt,code:Int) { runOnUiThread {
      if(session!=generation) return@runOnUiThread
-     if(code!=BluetoothGatt.GATT_SUCCESS) { closeConnection(); updateDisconnected("Could not read this light's controls. Try again."); return@runOnUiThread }
-     writeChar=g.services.flatMap { it.characteristics }.firstOrNull { c -> c.uuid.toString() in known && c.properties and (BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)!=0 }
+     if(code!=BluetoothGatt.GATT_SUCCESS) { closeConnection(); connectionFailure("Could not read this light's controls. Try again."); return@runOnUiThread }
+     discoveredServices=g.services.map { it.uuid.toString() }.toSet()
+     discoveredCharacteristics=g.services.flatMap { it.characteristics }.map { it.uuid.toString() }.toSet()
+     currentMatch=BleDetection.discovered(currentEvidence,discoveredServices,discoveredCharacteristics)
+     if(currentMatch.needsMeshRoute) { showMeshOptions(); return@runOnUiThread }
+     writeChar=if(BleDetection.canUseGeneric(currentMatch,discoveredCharacteristics)) g.services.flatMap { it.characteristics }.firstOrNull { c -> c.uuid.toString() in BleDetection.genericWrites && c.properties and (BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)!=0 } else null
      controls.setReady(writeChar!=null)
      detail.text=if(writeChar==null) "Needs a compatible controller" else "●  Connected · Bluetooth"
      status.text=if(writeChar==null) "This device uses an unknown control method. Try your LED controller or open Connection help." else "Ready. Try Turn on first. Commands are experimental for your controller."
@@ -161,12 +253,12 @@ class MainActivity : Activity() {
      status.text=if(code==BluetoothGatt.GATT_SUCCESS) "Command delivered. Check your light for the change." else "The light rejected the command ($code). Try again."
     } }
    },BluetoothDevice.TRANSPORT_LE)
-   handler.postDelayed({ if(session==generation && writeChar==null) { closeConnection(); updateDisconnected("Could not connect to a supported light. Try again or choose another device.") } },15000)
-  } catch(_:Exception) { closeConnection(); updateDisconnected("Could not connect. Check Bluetooth and try again.") }
+   handler.postDelayed({ if(session==generation && writeChar==null) { closeConnection(); connectionFailure("Could not connect to a supported light. Try again or choose another device.") } },15000)
+  } catch(_:Exception) { closeConnection(); connectionFailure("Could not connect. Check Bluetooth and try again.") }
  }
  private fun send(bytes:ByteArray) {
   val c=writeChar; val g=gatt
-  if(c==null || g==null) { status.text="Connect a light first."; return }
+  if(c==null || g==null || currentMatch.needsMeshRoute) { status.text="Connect a compatible LED controller first."; return }
   if(busy) { status.text="Sending the previous command. Give it a moment."; return }
   try {
    c.value=bytes; c.writeType=if(c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE!=0) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT

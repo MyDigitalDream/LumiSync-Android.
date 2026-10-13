@@ -54,13 +54,19 @@ class CyncActivity : Activity() {
  private lateinit var applyBrightness:Button
  private var lights=listOf<JSONObject>()
  private var busy=false
+ private var linkAddress=""
+ private var linkName=""
  override fun onCreate(savedInstanceState:Bundle?) {
   super.onCreate(savedInstanceState)
   ui=LumiUi(this)
+  linkAddress=intent.getStringExtra("ble_address") ?: ""
+  linkName=intent.getStringExtra("ble_name") ?: "your Bluetooth light"
+  if(linkAddress.isNotBlank()) CyncSession.selectedId=getPreferences(MODE_PRIVATE).getString("ble_link_$linkAddress",null)
   val root=ui.screen("Every light, one place.",true,{ finish() },{})
   setup=ui.card(root)
   setup.addView(ui.text("CONNECT GE CYNC",12f,Palette.accent,true)); ui.space(setup,10)
   setup.addView(ui.text("Bring your Cync lights in",24f,bold=true)); ui.space(setup,8)
+  ui.full(setup,ui.button("Find Cync nearby") { scanNearby() }); ui.space(setup,12)
   setup.addView(ui.text("LumiSync connects through your Home Assistant server. Set up your lights there once, then control them here.",15f,Palette.muted)); ui.space(setup,16)
   ui.full(setup,ui.button("How to set up Home Assistant") { showSetupHelp() }); ui.space(setup,20)
   url=ui.field(setup,"Server address","https://your-home-assistant-server")
@@ -93,12 +99,13 @@ class CyncActivity : Activity() {
   })
   dashboard.removeView(brightnessCard); dashboard.addView(brightnessCard,2)
   val account=ui.card(dashboard)
+  ui.full(account,ui.button("Find Cync nearby") { scanNearby() }); ui.space(account,12)
   account.addView(ui.text("Your connection",16f,bold=true)); ui.space(account,6)
   account.addView(ui.text("The picker includes all your Home Assistant lights. Choose the Cync device you want to control.",14f,Palette.muted)); ui.space(account,12)
   disconnect=ui.button("Disconnect server") { CyncSession.client=null; CyncSession.selectedId=null; lights=emptyList(); token.text.clear(); showSetup(); status.text="Disconnected. Your token has been cleared from the session." }; ui.full(account,disconnect)
   if(CyncSession.client==null) showSetup() else { showDashboard(); loadLights() }
  }
- private fun showSetup() { setup.visibility=View.VISIBLE; dashboard.visibility=View.GONE; status.text="" }
+ private fun showSetup() { setup.visibility=View.VISIBLE; dashboard.visibility=View.GONE; status.text=if(linkAddress.isBlank()) "" else "Found $linkName nearby. Connect your server, then choose the matching light to link it." }
  private fun showDashboard() { setup.visibility=View.GONE; dashboard.visibility=View.VISIBLE; updateControls() }
  private fun connect() {
   if(busy) return
@@ -123,8 +130,13 @@ class CyncActivity : Activity() {
  private fun receiveLights(states:JSONArray) {
   lights=(0 until states.length()).map { states.getJSONObject(it) }.filter { it.optString("entity_id").startsWith("light.") }.sortedBy { name(it).lowercase() }
   if(lights.none { it.optString("entity_id")==CyncSession.selectedId }) CyncSession.selectedId=null
-  if(lights.size==1) CyncSession.selectedId=lights[0].getString("entity_id")
-  status.text=if(lights.isEmpty()) "No lights found. Add Cync in Home Assistant, then refresh." else "${lights.size} lights available. Choose your Cync light."
+  if(lights.size==1 && linkAddress.isBlank()) CyncSession.selectedId=lights[0].getString("entity_id")
+  status.text=when {
+   lights.isEmpty() -> "No lights found. Add Cync in Home Assistant, then refresh."
+   linkAddress.isNotBlank() && CyncSession.selectedId==null -> "Choose the Home Assistant light matching $linkName. LumiSync will remember your choice on this phone."
+   linkAddress.isNotBlank() -> "Opened your saved Home Assistant link for $linkName."
+   else -> "${lights.size} lights available. Choose your Cync light."
+  }
   updateControls()
  }
  private fun name(light:JSONObject)=light.optJSONObject("attributes")?.optString("friendly_name")?.takeIf { it.isNotBlank() } ?: light.optString("entity_id")
@@ -132,7 +144,14 @@ class CyncActivity : Activity() {
   if(lights.isEmpty()) { status.text="No lights found yet. Add Cync in Home Assistant, then refresh."; return }
   val labels=lights.map { "${name(it)}\n${it.optString("state")} · ${it.optString("entity_id")}" }.toTypedArray()
   AlertDialog.Builder(this).setTitle("Choose a light").setItems(labels) { _,index ->
-   CyncSession.selectedId=lights[index].getString("entity_id"); updateControls(); status.text="Selected ${name(lights[index])}."
+   val id=lights[index].getString("entity_id")
+   if(linkAddress.isBlank()) { CyncSession.selectedId=id; updateControls(); status.text="Selected ${name(lights[index])}." }
+   else AlertDialog.Builder(this).setTitle("Link this light?")
+    .setMessage("Use ${name(lights[index])} in Home Assistant for $linkName? Check that these are the same physical light.")
+    .setPositiveButton("Link light") { _,_ ->
+     CyncSession.selectedId=id; getPreferences(MODE_PRIVATE).edit().putString("ble_link_$linkAddress",id).apply()
+     updateControls(); status.text="Linked to ${name(lights[index])}. This choice is saved on your phone."
+    }.setNegativeButton("Cancel",null).show()
   }.setNegativeButton("Cancel",null).show()
  }
  private fun selected()=lights.firstOrNull { it.optString("entity_id")==CyncSession.selectedId }
@@ -184,6 +203,10 @@ class CyncActivity : Activity() {
     }); updateControls()
    }
   }
+ }
+ private fun scanNearby() {
+  startActivity(android.content.Intent(this,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("scan_lights",true))
+  finish()
  }
  private fun showSetupHelp() {
   AlertDialog.Builder(this).setTitle("Set up Cync once").setMessage("1. Set up your lights in the GE Cync app.\n\n2. On a running Home Assistant server, open Settings → Devices & services → Add integration → Cync.\n\n3. Enable trusted HTTPS access to your server.\n\n4. In your Home Assistant profile, create a long-lived access token and paste it into LumiSync.\n\nThis version needs a Home Assistant server. It cannot sign into GE Cync directly.")

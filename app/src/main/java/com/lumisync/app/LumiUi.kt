@@ -133,8 +133,8 @@ internal class LightControls(val ui:LumiUi,parent:LinearLayout,onPower:(Boolean)
  private val preview=View(ui.activity)
  private val colorName=ui.text("Sky blue",18f,bold=true)
  private val intensityLabel=ui.text("Color intensity · 100%",14f,Palette.muted)
- private val slider=SeekBar(ui.activity).apply { max=99; progress=99; progressTintList=ColorStateList.valueOf(Palette.accent); thumbTintList=ColorStateList.valueOf(Palette.accent); contentDescription="Color intensity" }
- private val apply=ui.button("Apply color",true) { onColor(wheel.selectedColor,slider.progress+1) }
+ private val slider:SeekBar=SeekBar(ui.activity).apply { max=99; progress=99; progressTintList=ColorStateList.valueOf(Palette.accent); thumbTintList=ColorStateList.valueOf(Palette.accent); contentDescription="Color intensity" }
+ private val applyColor:Button=ui.button("Apply color",true) { onColor(wheel.selectedColor,slider.progress+1) }
  private val swatches=mutableListOf<Button>()
  init {
   powerCard.addView(ui.text("Power",18f,bold=true)); ui.space(powerCard,12); ui.pair(powerCard,on,off)
@@ -153,7 +153,7 @@ internal class LightControls(val ui:LumiUi,parent:LinearLayout,onPower:(Boolean)
    }
   }
   ui.space(colorCard,8); colorCard.addView(intensityLabel); colorCard.addView(slider,LinearLayout.LayoutParams(-1,ui.dp(48)))
-  ui.space(colorCard,8); ui.full(colorCard,apply)
+  ui.space(colorCard,8); ui.full(colorCard,applyColor)
   wheel.onColor={ color -> preview.background=ui.shape(color,14); colorName.text=String.format("#%06X",0xFFFFFF and color) }
   slider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
    override fun onProgressChanged(s:SeekBar,p:Int,user:Boolean) { intensityLabel.text="Color intensity · ${p+1}%" }
@@ -163,7 +163,7 @@ internal class LightControls(val ui:LumiUi,parent:LinearLayout,onPower:(Boolean)
   setReady(false)
  }
  fun setReady(ready:Boolean,colorSupported:Boolean=true) {
-  ui.enable(on,ready); ui.enable(off,ready); ui.enable(apply,ready && colorSupported)
+  ui.enable(on,ready); ui.enable(off,ready); ui.enable(applyColor,ready && colorSupported)
   colorCard.visibility=if(colorSupported) View.VISIBLE else View.GONE
  }
  fun setColor(color:Int) { wheel.select(color) }

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode><AssemblyName>LumiSync-Bridge</AssemblyName><Version>0.1.0</Version></PropertyGroup>
+<ItemGroup><ProjectReference Include="../LumiSync.Core/LumiSync.Core.csproj" /></ItemGroup>
+</Project>

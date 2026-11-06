@@ -7,8 +7,8 @@ on:
 permissions:
   contents: read
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -18,26 +18,37 @@ jobs:
       - name: Check frame handling and Home Assistant requests
         run: dotnet run --project windows/LumiSync.Checks -c Release
       - name: Build standalone Windows x64 preview
-        run: dotnet publish windows/LumiSync.Bridge -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o bridge-package
-      - name: Check window launch
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath ./bridge-package/LumiSync-Bridge.exe -ArgumentList '--smoke-test' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Window launch check failed: $($process.ExitCode)" }
-          if (!(Test-Path bridge-preview.png)) { throw 'Preview image missing' }
+        run: dotnet publish windows/LumiSync.Bridge -c Release -r win-x64 --self-contained true -p:EnableWindowsTargeting=true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o bridge-package
       - name: Include instructions
-        shell: pwsh
         run: |
-          Copy-Item windows/README.md bridge-package/START-HERE.md
-          Copy-Item windows/THIRD-PARTY-NOTICES.md bridge-package/THIRD-PARTY-NOTICES.md
-          Get-ChildItem bridge-package -Filter '*.pdb' | Remove-Item
+          cp windows/README.md bridge-package/START-HERE.md
+          cp windows/THIRD-PARTY-NOTICES.md bridge-package/THIRD-PARTY-NOTICES.md
       - uses: actions/upload-artifact@v4
         with:
           name: LumiSync-PC-Bridge-Preview-0.1
           path: bridge-package/
           if-no-files-found: error
+  window-check:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 5
+    # Repository name ends in a dot, so avoid its invalid Windows checkout path.
+    defaults:
+      run:
+        working-directory: ${{ runner.temp }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LumiSync-PC-Bridge-Preview-0.1
+          path: ${{ runner.temp }}/lumisync-bridge
+      - name: Check window launch
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ./lumisync-bridge/LumiSync-Bridge.exe -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Window launch check failed: $($process.ExitCode)" }
+          if (!(Test-Path bridge-preview.png)) { throw 'Preview image missing' }
       - uses: actions/upload-artifact@v4
         with:
           name: LumiSync-PC-window-check
-          path: bridge-preview.png
+          path: ${{ runner.temp }}/bridge-preview.png
           if-no-files-found: error
